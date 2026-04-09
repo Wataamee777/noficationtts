@@ -11,6 +11,7 @@ import android.speech.tts.TextToSpeech
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import androidx.core.app.NotificationCompat
+import java.util.Locale
 
 class MyNotificationService : NotificationListenerService(), TextToSpeech.OnInitListener {
     companion object {
@@ -19,6 +20,7 @@ class MyNotificationService : NotificationListenerService(), TextToSpeech.OnInit
     }
 
     private var tts: TextToSpeech? = null
+    private var isTtsReady = false
 
     override fun onCreate() {
         super.onCreate()
@@ -27,12 +29,25 @@ class MyNotificationService : NotificationListenerService(), TextToSpeech.OnInit
         tts = TextToSpeech(this, this)
     }
 
-    override fun onInit(status: Int) {}
+    override fun onInit(status: Int) {
+        if (status == TextToSpeech.SUCCESS) {
+            isTtsReady = true
+            tts?.language = Locale.JAPAN
+        }
+    }
 
     override fun onNotificationPosted(sbn: StatusBarNotification) {
-        val text = sbn.notification?.extras?.getCharSequence(android.app.Notification.EXTRA_TEXT)?.toString()
-        if (!text.isNullOrBlank()) {
-            tts?.speak(text, TextToSpeech.QUEUE_ADD, null, sbn.key)
+        if (sbn.packageName == packageName || !isTtsReady) {
+            return
+        }
+
+        val extras = sbn.notification.extras
+        val title = extras?.getCharSequence(Notification.EXTRA_TITLE)?.toString()?.trim().orEmpty()
+        val text = extras?.getCharSequence(Notification.EXTRA_TEXT)?.toString()?.trim().orEmpty()
+        val speakText = listOf(title, text).filter { it.isNotBlank() }.joinToString("。")
+
+        if (speakText.isNotBlank()) {
+            tts?.speak(speakText, TextToSpeech.QUEUE_ADD, null, sbn.key)
         }
     }
 
@@ -43,9 +58,12 @@ class MyNotificationService : NotificationListenerService(), TextToSpeech.OnInit
 }
 
 fun buildPersistentNotification(context: Context): Notification {
-    val openIntent = context.packageManager.getLaunchIntentForPackage(context.packageName)
+    val openIntent = Intent(context, MainActivity::class.java)
     val pending = PendingIntent.getActivity(
-        context, 0, openIntent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        context,
+        0,
+        openIntent,
+        PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
     )
     return NotificationCompat.Builder(context, MyNotificationService.CHANNEL_ID)
         .setContentTitle("通知読み上げくん")
@@ -58,16 +76,16 @@ fun buildPersistentNotification(context: Context): Notification {
 
 fun createNotificationChannel(context: Context) {
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-        val name = "TTS Foreground Service"
-        val desc = "通知読み上げサービスの常駐通知"
         val channel = NotificationChannel(
             MyNotificationService.CHANNEL_ID,
-            name,
-            NotificationManager.IMPORTANCE_MIN
-        )
-        channel.description = desc
-        channel.setSound(null, null)
-        channel.lockscreenVisibility = android.app.Notification.VISIBILITY_SECRET
+            "TTS Foreground Service",
+            NotificationManager.IMPORTANCE_LOW
+        ).apply {
+            description = "通知読み上げサービスの常駐通知"
+            setSound(null, null)
+            lockscreenVisibility = Notification.VISIBILITY_SECRET
+        }
+
         val manager = context.getSystemService(NotificationManager::class.java)
         manager?.createNotificationChannel(channel)
     }
